@@ -1,97 +1,90 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# Khai báo cấu trúc dữ liệu khổng lồ nhận từ Extension
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 1. Cập nhật Model để nhận đủ dữ liệu từ Gói Free
 class ProductData(BaseModel):
     title: str
     url: str
-    raw_text: str
+    average_star: float
+    video_count: int
     images: List[str]
     reviews: List[str]
 
 @app.post("/api/analyze")
-def analyze_product(data: ProductData):
-    print(f"Đang phân tích: {data.title[:30]}...")
+async def analyze_product(data: ProductData):
+    trust_score = 100
     warnings = []
     
-    # ---------------------------------------------------------
-    # MÔ HÌNH TÍNH TRUST SCORE THEO TRỌNG SỐ (Thang 100)
-    # ---------------------------------------------------------
+    # --- THUẬT TOÁN ĐÁNH GIÁ (BẢN BASIC) ---
     
-    # 1. Điểm Shop & Nhất quán (Tối đa 45 điểm)
-    shop_score = 45
-    if "đã hủy" in data.raw_text.lower() or "vi phạm" in data.raw_text.lower():
-        shop_score -= 10
-        warnings.append("Shop có dấu hiệu tỉ lệ hoàn/hủy đơn cao.")
+    # 1. Đánh giá qua Điểm Sao (Trọng số 20%)
+    if data.average_star < 4.0:
+        trust_score -= 20
+        warnings.append(f"Đánh giá tổng quan thấp ({data.average_star} Sao).")
+    elif data.average_star < 4.5:
+        trust_score -= 10
+        warnings.append(f"Điểm sao trung bình ({data.average_star} Sao).")
 
-    # 2. Phân tích Nội dung & Review bất thường (Tối đa 40 điểm) [Trọng số: 40%]
-    review_score = 40
-    # Mở rộng mạnh tay bộ từ khóa tiêu cực
-    spam_keywords = ["seeding", "lừa đảo", "đừng mua", "fake", "kém", "tệ", "chậm", "thất vọng", "rách", "bẩn", "không giống", "dởm", "đắt", "hoàn hàng", "mỏng", "chê"]
+    # 2. Đánh giá qua Hình ảnh & Video thực tế (Trọng số 10%)
+    total_media = len(data.images) + data.video_count
+    if total_media == 0:
+        trust_score -= 10
+        warnings.append("Cảnh báo: Không có ảnh hoặc video thực tế từ người dùng.")
+        
+    # 3. Phân tích Ngôn ngữ Bình luận (Trọng số 70%)
+    spam_keywords = ["lừa đảo", "đừng mua", "fake", "kém", "tệ", "chậm", "thất vọng", "rách", "bẩn", "không giống", "dởm", "đắt", "hoàn hàng", "giả"]
     suspicious_count = 0
     
     for rev in data.reviews:
         rev_lower = rev.lower()
         if any(word in rev_lower for word in spam_keywords):
             suspicious_count += 1
-        
-        # Cảnh báo review seeding (khen quá đà nhưng rất ngắn)
-        if len(rev) < 20 and ("tuyệt vời" in rev_lower or "quá đẹp" in rev_lower):
-            suspicious_count += 0.5 
-
+            
     if len(data.reviews) > 0:
         spam_ratio = suspicious_count / len(data.reviews)
-        # Siết chặt tỉ lệ phạt
-        if spam_ratio > 0.2: 
-            review_score -= 30
-            warnings.append(f"Nguy hiểm: {int(spam_ratio*100)}% review có từ khóa chê bai hoặc seeding!")
+        if spam_ratio > 0.15: 
+            trust_score -= 40
+            warnings.append(f"Nguy hiểm: Tới {int(spam_ratio*100)}% bình luận chứa phàn nàn/chê bai.")
         elif spam_ratio > 0.05:
-            review_score -= 15
-            warnings.append("Lưu ý: Có xuất hiện các đánh giá không hài lòng.")
+            trust_score -= 20
+            warnings.append("Lưu ý: Phát hiện nhiều đánh giá không hài lòng.")
     else:
-        # Phạt rất nặng nếu không cào được review nào (hoặc do shop ẩn review)
-        review_score -= 35
-        warnings.append("Rủi ro: Không tìm thấy đánh giá nào hợp lệ để phân tích.")
+        trust_score -= 30
+        warnings.append("Rủi ro: Không thu thập được đủ bình luận để phân tích.")
 
-    # 3. Phân tích Hình ảnh / Thị giác máy tính (Tối đa 15 điểm) [Trọng số: 15%]
-    image_score = 15
-    # Thực tế sẽ dùng Computer Vision soi watermark/ảnh mạng, MVP tạm đếm số lượng
-    if len(data.images) < 2:
-        image_score -= 10
-        warnings.append("Thiếu hình ảnh thực tế, nguy cơ chênh lệch so với mô tả.")
-    elif len(data.images) > 10:
-        image_score = 15 # Shop có đầu tư hình ảnh đầy đủ
-
-    # ---------------------------------------------------------
-    # TỔNG KẾT KẾT QUẢ
-    # ---------------------------------------------------------
-    total_score = shop_score + review_score + image_score
-    total_score = max(0, min(100, int(total_score))) # Đảm bảo điểm từ 0-100
+    # 4. Chuẩn hóa kết quả
+    trust_score = max(0, min(100, trust_score))
     
-    # Ngưỡng phân loại điểm
-    if total_score >= 80:
-        label = "Đáng tin cậy cao"
-    elif total_score >= 60:
-        label = "Tương đối tin cậy"
-    elif total_score >= 40:
-        label = "Cần thận trọng"
+    if trust_score >= 80:
+        label = "An toàn (Nên mua)"
+    elif trust_score >= 50:
+        label = "Cần cân nhắc (Nên đọc kỹ)"
     else:
-        label = "Rủi ro cao"
-
-    warning_msg = " | ".join(warnings) if warnings else "An toàn: Không phát hiện bất thường đáng kể."
-
+        label = "Rủi ro cao (Tránh mua)"
+        
+    warning_text = " | ".join(warnings) if warnings else "Không phát hiện rủi ro nào."
+    
     return {
         "success": True,
-        "trust_score": total_score,
+        "trust_score": trust_score,
         "label": label,
-        "warning": warning_msg,
+        "warning": warning_text,
         "details": {
+            "tier": "TrustBuy Basic",
+            "crawled_stars": data.average_star,
+            "crawled_reviews": len(data.reviews),
             "crawled_images": len(data.images),
-            "crawled_reviews": len(data.reviews)
+            "crawled_videos": data.video_count
         }
     }
