@@ -12,12 +12,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. Cập nhật Model để nhận đủ dữ liệu từ Gói Free
+# Cập nhật Model nhận thêm 3 trường thống kê sao
 class ProductData(BaseModel):
     title: str
     url: str
     average_star: float
     video_count: int
+    total_reviews_count: int = 0
+    star1_count: int = 0
+    star2_count: int = 0
     images: List[str]
     reviews: List[str]
 
@@ -26,23 +29,32 @@ async def analyze_product(data: ProductData):
     trust_score = 100
     warnings = []
     
-    # --- THUẬT TOÁN ĐÁNH GIÁ (BẢN BASIC) ---
-    
-    # 1. Đánh giá qua Điểm Sao (Trọng số 20%)
+    # 1. Trừ điểm qua Bảng Thống Kê Thực Tế (Khắc phục lỗi 100 điểm ảo)
+    bad_reviews_total = data.star1_count + data.star2_count
+    if data.total_reviews_count > 0:
+        bad_ratio = bad_reviews_total / data.total_reviews_count
+        if bad_ratio > 0.1: # Nếu hơn 10% khách hàng chê 1-2 sao
+            trust_score -= 30
+            warnings.append(f"Nguy hiểm: Có {bad_reviews_total} đánh giá 1-2 Sao (Chiếm {int(bad_ratio*100)}%).")
+        elif bad_ratio > 0.03: # Nếu hơn 3% khách chê (Như trong ảnh của bạn là ~4%)
+            trust_score -= 15
+            warnings.append(f"Lưu ý: Tồn tại {bad_reviews_total} đánh giá tiêu cực (1-2 Sao).")
+            
+    # 2. Đánh giá qua Điểm Sao Trung bình
     if data.average_star < 4.0:
         trust_score -= 20
-        warnings.append(f"Đánh giá tổng quan thấp ({data.average_star} Sao).")
-    elif data.average_star < 4.5:
-        trust_score -= 10
-        warnings.append(f"Điểm sao trung bình ({data.average_star} Sao).")
+        if "Đánh giá tổng quan thấp" not in "".join(warnings):
+            warnings.append(f"Điểm sao trung bình thấp ({data.average_star} Sao).")
+    elif data.average_star < 4.6:
+        trust_score -= 5
 
-    # 2. Đánh giá qua Hình ảnh & Video thực tế (Trọng số 10%)
+    # 3. Đánh giá qua Hình ảnh & Video 
     total_media = len(data.images) + data.video_count
     if total_media == 0:
         trust_score -= 10
-        warnings.append("Cảnh báo: Không có ảnh hoặc video thực tế từ người dùng.")
+        warnings.append("Không có ảnh hoặc video thực tế.")
         
-    # 3. Phân tích Ngôn ngữ Bình luận (Trọng số 70%)
+    # 4. Phân tích Ngôn ngữ Bình luận (Chỉ trừ thêm nếu quét trúng từ khóa nặng)
     spam_keywords = ["lừa đảo", "đừng mua", "fake", "kém", "tệ", "chậm", "thất vọng", "rách", "bẩn", "không giống", "dởm", "đắt", "hoàn hàng", "giả"]
     suspicious_count = 0
     
@@ -52,23 +64,17 @@ async def analyze_product(data: ProductData):
             suspicious_count += 1
             
     if len(data.reviews) > 0:
-        spam_ratio = suspicious_count / len(data.reviews)
-        if spam_ratio > 0.15: 
-            trust_score -= 40
-            warnings.append(f"Nguy hiểm: Tới {int(spam_ratio*100)}% bình luận chứa phàn nàn/chê bai.")
-        elif spam_ratio > 0.05:
+        keyword_spam_ratio = suspicious_count / len(data.reviews)
+        if keyword_spam_ratio > 0.15: 
             trust_score -= 20
-            warnings.append("Lưu ý: Phát hiện nhiều đánh giá không hài lòng.")
-    else:
-        trust_score -= 30
-        warnings.append("Rủi ro: Không thu thập được đủ bình luận để phân tích.")
+            warnings.append("AI phát hiện nhiều ngôn từ phàn nàn gay gắt trong bình luận.")
 
-    # 4. Chuẩn hóa kết quả
+    # Chuẩn hóa điểm
     trust_score = max(0, min(100, trust_score))
     
-    if trust_score >= 80:
+    if trust_score >= 85:
         label = "An toàn (Nên mua)"
-    elif trust_score >= 50:
+    elif trust_score >= 60:
         label = "Cần cân nhắc (Nên đọc kỹ)"
     else:
         label = "Rủi ro cao (Tránh mua)"
