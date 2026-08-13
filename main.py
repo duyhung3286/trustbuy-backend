@@ -31,28 +31,32 @@ def analyze_product(data: ProductData):
 
     # 2. Phân tích Nội dung & Review bất thường (Tối đa 40 điểm) [Trọng số: 40%]
     review_score = 40
-    spam_keywords = ["seeding", "lừa đảo", "đừng mua", "hàng fake", "kém chất lượng", "treo đầu dê"]
+    # Mở rộng mạnh tay bộ từ khóa tiêu cực
+    spam_keywords = ["seeding", "lừa đảo", "đừng mua", "fake", "kém", "tệ", "chậm", "thất vọng", "rách", "bẩn", "không giống", "dởm", "đắt", "hoàn hàng", "mỏng", "chê"]
     suspicious_count = 0
     
     for rev in data.reviews:
         rev_lower = rev.lower()
-        # NLP cơ bản: Phát hiện cảm xúc tiêu cực và từ khóa cảnh báo
         if any(word in rev_lower for word in spam_keywords):
             suspicious_count += 1
-        # Phát hiện bất thường: review quá ngắn hoặc vô nghĩa
-        if len(rev) < 15:
+        
+        # Cảnh báo review seeding (khen quá đà nhưng rất ngắn)
+        if len(rev) < 20 and ("tuyệt vời" in rev_lower or "quá đẹp" in rev_lower):
             suspicious_count += 0.5 
 
     if len(data.reviews) > 0:
         spam_ratio = suspicious_count / len(data.reviews)
-        if spam_ratio > 0.3:
-            review_score -= 25
-            warnings.append(f"Cảnh báo: Phát hiện {int(spam_ratio*100)}% review có dấu hiệu bất thường/tiêu cực!")
-        elif spam_ratio > 0.1:
-            review_score -= 10
+        # Siết chặt tỉ lệ phạt
+        if spam_ratio > 0.2: 
+            review_score -= 30
+            warnings.append(f"Nguy hiểm: {int(spam_ratio*100)}% review có từ khóa chê bai hoặc seeding!")
+        elif spam_ratio > 0.05:
+            review_score -= 15
+            warnings.append("Lưu ý: Có xuất hiện các đánh giá không hài lòng.")
     else:
-        review_score -= 15
-        warnings.append("Sản phẩm có quá ít review để AI phân tích chính xác.")
+        # Phạt rất nặng nếu không cào được review nào (hoặc do shop ẩn review)
+        review_score -= 35
+        warnings.append("Rủi ro: Không tìm thấy đánh giá nào hợp lệ để phân tích.")
 
     # 3. Phân tích Hình ảnh / Thị giác máy tính (Tối đa 15 điểm) [Trọng số: 15%]
     image_score = 15
