@@ -27,21 +27,20 @@ class ProductData(BaseModel):
 async def analyze_product(data: ProductData):
     warnings = []
     
-    # 1. Điểm Uy tín Sao (Trọng số 40%)
+    # 1. Điểm Uy tín Sao
     star_score = 100
     bad_reviews_total = data.star1_count + data.star2_count
     if data.total_reviews_count > 0:
         bad_ratio = bad_reviews_total / data.total_reviews_count
         if bad_ratio > 0.1: 
             star_score = 40
-            warnings.append(f"Cảnh báo: Có {bad_reviews_total} đánh giá 1-2 Sao.")
+            warnings.append(f"Có {bad_reviews_total} đánh giá 1-2 Sao.")
         elif bad_ratio > 0.03: 
             star_score = 70
     if data.average_star < 4.0:
         star_score = min(star_score, 50)
-        warnings.append(f"Điểm sao trung bình thấp ({data.average_star}/5.0).")
 
-    # 2. Điểm Trực quan Media (Trọng số 20%)
+    # 2. Điểm Trực quan Media
     media_score = 100
     total_media = len(data.images) + data.video_count
     if total_media == 0:
@@ -50,34 +49,49 @@ async def analyze_product(data: ProductData):
     elif total_media < 5:
         media_score = 50
         
-    # 3. Điểm Phân tích NLP Bình luận (Trọng số 40%)
+    # 3. Điểm Đánh giá từ khách (NLP)
     sentiment_score = 100
-    spam_keywords = ["lừa đảo", "đừng mua", "fake", "kém", "tệ", "chậm", "thất vọng", "rách", "bẩn", "không giống", "dởm", "đắt", "hoàn hàng", "giả"]
+    spam_keywords = ["lừa đảo", "đừng mua", "fake", "kém", "tệ", "chậm", "thất vọng", "rách", "bẩn", "không giống", "dởm", "đắt", "hoàn hàng", "giả", "khác mô tả"]
     suspicious_count = sum(1 for rev in data.reviews if any(word in rev.lower() for word in spam_keywords))
             
-    keyword_ratio = suspicious_count / max(data.total_reviews_count, len(data.reviews), 1)
+    keyword_ratio = suspicious_count / max(len(data.reviews), 1)
     if keyword_ratio > 0.15: 
         sentiment_score = 40
         warnings.append("Phát hiện nhiều ngôn từ tiêu cực/phàn nàn.")
     elif keyword_ratio > 0.05:
         sentiment_score = 70
 
-    # TÍNH ĐIỂM TỔNG HỢP
-    trust_score = int((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4))
+    # 4. CHỈ SỐ MỚI: Độ Chân Thực (Chống Seeding/Cày xu)
+    authenticity_score = 100
+    seeding_keywords = ["nhận xu", "mua hộ", "chưa dùng", "chưa test", "hình ảnh mang tính chất", "video mang tính chất", "không liên quan", "để nhận xu"]
+    seeding_count = sum(1 for rev in data.reviews if any(word in rev.lower() for word in seeding_keywords))
+    
+    seeding_ratio = seeding_count / max(len(data.reviews), 1)
+    if seeding_ratio > 0.3: # Hơn 30% là review rác
+        authenticity_score = 30
+    elif seeding_ratio > 0.1:
+        authenticity_score = 70
+
+    # TÍNH ĐIỂM TỔNG HỢP (Đã chia lại trọng số cho 4 thanh)
+    trust_score = int((star_score * 0.3) + (media_score * 0.2) + (sentiment_score * 0.3) + (authenticity_score * 0.2))
     trust_score = max(0, min(100, trust_score))
     
-    # HỆ THỐNG QUYẾT ĐỊNH (TRAFFIC LIGHT)
+    # KẾT LUẬN & ĐIỀU HƯỚNG QUYẾT ĐỊNH MUA
+    verdict_text = ""
     if trust_score >= 80:
         label = "Nên Mua (Độ uy tín cao)"
-        color_code = "#059669" # Xanh lá dứt khoát
+        color_code = "#059669" 
+        verdict_text = "Sản phẩm an toàn, chất lượng đúng mô tả, ít dấu hiệu seeding. Bạn có thể tự tin chốt đơn!"
     elif trust_score >= 60:
         label = "Cân nhắc kỹ (Có rủi ro nhỏ)"
-        color_code = "#D97706" # Vàng cam cảnh báo
+        color_code = "#D97706" 
+        verdict_text = "Có một số rủi ro về review cày xu hoặc chất lượng. Cần đọc kỹ bình luận trước khi mua."
     else:
-        label = "Không Nên Mua (Rủi ro cao)"
-        color_code = "#DC2626" # Đỏ dừng lại
+        label = "Rủi ro cao (Không nên mua)"
+        color_code = "#DC2626" 
+        verdict_text = "Cảnh báo rủi ro cao! Lịch sử đánh giá có nhiều bất thường hoặc phàn nàn nghiêm trọng."
         
-    warning_text = " | ".join(warnings) if warnings else "Các chỉ số hiện tại ở mức an toàn."
+    warning_text = " | ".join(warnings) if warnings else ""
     
     return {
         "success": True,
@@ -85,11 +99,13 @@ async def analyze_product(data: ProductData):
         "label": label,
         "color": color_code,
         "warning": warning_text,
+        "verdict": verdict_text,
         "details": {
             "tier": "TrustBuy MVP",
             "star_score": star_score,
             "media_score": media_score,
             "sentiment_score": sentiment_score,
+            "authenticity_score": authenticity_score,
             "crawled_stars": data.average_star,
             "crawled_reviews": len(data.reviews),
             "crawled_images": len(data.images),
