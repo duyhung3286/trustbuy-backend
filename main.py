@@ -25,74 +25,71 @@ class ProductData(BaseModel):
 
 @app.post("/api/analyze")
 async def analyze_product(data: ProductData):
-    trust_score = 100
     warnings = []
     
-    # 1. ĐÁNH GIÁ QUA BẢNG THỐNG KÊ SAO (Phân tích bất thường)
+    # 1. Điểm Uy tín Sao (Trọng số 40%)
+    star_score = 100
     bad_reviews_total = data.star1_count + data.star2_count
     if data.total_reviews_count > 0:
         bad_ratio = bad_reviews_total / data.total_reviews_count
         if bad_ratio > 0.1: 
-            trust_score -= 30
-            warnings.append(f"Có dấu hiệu bất thường: {bad_reviews_total} đánh giá 1-2 Sao (Tỉ lệ {int(bad_ratio*100)}%).")
+            star_score = 40
+            warnings.append(f"Cảnh báo: Có {bad_reviews_total} đánh giá 1-2 Sao.")
         elif bad_ratio > 0.03: 
-            trust_score -= 10
-            warnings.append(f"Cần lưu ý: Ghi nhận {bad_reviews_total} đánh giá ở mức 1-2 Sao.")
-            
-    # 2. ĐÁNH GIÁ QUA ĐIỂM SAO TRUNG BÌNH
+            star_score = 70
     if data.average_star < 4.0:
-        trust_score -= 20
-        warnings.append(f"Điểm sao trung bình ở mức thấp ({data.average_star}/5.0).")
+        star_score = min(star_score, 50)
+        warnings.append(f"Điểm sao trung bình thấp ({data.average_star}/5.0).")
 
-    # 3. ĐÁNH GIÁ QUA MEDIA (Tính nhất quán sản phẩm)
+    # 2. Điểm Trực quan Media (Trọng số 20%)
+    media_score = 100
     total_media = len(data.images) + data.video_count
     if total_media == 0:
-        trust_score -= 10
-        warnings.append("Thiếu dữ liệu hình ảnh/video thực tế từ người dùng để đối chiếu.")
+        media_score = 0
+        warnings.append("Thiếu hình ảnh/video thực tế từ người mua.")
+    elif total_media < 5:
+        media_score = 50
         
-    # 4. PHÂN TÍCH TEXT BÌNH LUẬN (NLP Basic)
-    # Lưu ý: Người dùng có thể chửi là "lừa đảo", nhưng Output của AI chỉ được báo là "ngôn từ phàn nàn"
+    # 3. Điểm Phân tích NLP Bình luận (Trọng số 40%)
+    sentiment_score = 100
     spam_keywords = ["lừa đảo", "đừng mua", "fake", "kém", "tệ", "chậm", "thất vọng", "rách", "bẩn", "không giống", "dởm", "đắt", "hoàn hàng", "giả"]
-    suspicious_count = 0
-    
-    for rev in data.reviews:
-        rev_lower = rev.lower()
-        if any(word in rev_lower for word in spam_keywords):
-            suspicious_count += 1
+    suspicious_count = sum(1 for rev in data.reviews if any(word in rev.lower() for word in spam_keywords))
             
-    if data.total_reviews_count > 0:
-        keyword_ratio = suspicious_count / data.total_reviews_count
-    elif len(data.reviews) > 0:
-        keyword_ratio = suspicious_count / len(data.reviews)
-    else:
-        keyword_ratio = 0
-        
+    keyword_ratio = suspicious_count / max(data.total_reviews_count, len(data.reviews), 1)
     if keyword_ratio > 0.15: 
-        trust_score -= 20
-        warnings.append("Tần suất xuất hiện từ khóa phàn nàn/tiêu cực trong bình luận cao.")
+        sentiment_score = 40
+        warnings.append("Phát hiện nhiều ngôn từ tiêu cực/phàn nàn.")
+    elif keyword_ratio > 0.05:
+        sentiment_score = 70
 
-    # 5. CHUẨN HÓA ĐIỂM SỐ VÀ PHÂN LOẠI (Theo chuẩn Mục IV của Đề cương)
+    # TÍNH ĐIỂM TỔNG HỢP
+    trust_score = int((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4))
     trust_score = max(0, min(100, trust_score))
     
+    # HỆ THỐNG QUYẾT ĐỊNH (TRAFFIC LIGHT)
     if trust_score >= 80:
-        label = "Đáng tin cậy cao (Có thể yên tâm)"
+        label = "Nên Mua (Độ uy tín cao)"
+        color_code = "#059669" # Xanh lá dứt khoát
     elif trust_score >= 60:
-        label = "Tương đối tin cậy (Nên đọc thêm review)"
-    elif trust_score >= 40:
-        label = "Cần thận trọng (Có chỉ số bất thường)"
+        label = "Cân nhắc kỹ (Có rủi ro nhỏ)"
+        color_code = "#D97706" # Vàng cam cảnh báo
     else:
-        label = "Rủi ro cao (Khuyến nghị cân nhắc lại)"
+        label = "Không Nên Mua (Rủi ro cao)"
+        color_code = "#DC2626" # Đỏ dừng lại
         
-    warning_text = " | ".join(warnings) if warnings else "Các chỉ số hiện tại ở mức ổn định."
+    warning_text = " | ".join(warnings) if warnings else "Các chỉ số hiện tại ở mức an toàn."
     
     return {
         "success": True,
         "trust_score": trust_score,
         "label": label,
+        "color": color_code,
         "warning": warning_text,
-        "disclaimer": "Trust Score là công cụ hỗ trợ tham khảo tự động, không phải kết luận pháp lý.", # Thêm dòng cam kết pháp lý
         "details": {
-            "tier": "TrustBuy Basic (Waze Model)",
+            "tier": "TrustBuy MVP",
+            "star_score": star_score,
+            "media_score": media_score,
+            "sentiment_score": sentiment_score,
             "crawled_stars": data.average_star,
             "crawled_reviews": len(data.reviews),
             "crawled_images": len(data.images),
