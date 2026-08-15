@@ -14,11 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# THIẾT LẬP GEMINI AI (Bảo mật qua Biến môi trường)
+# THIẾT LẬP GEMINI AI
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 genai.configure(api_key=GEMINI_API_KEY)
-# Đã nâng cấp lên model mới nhất để tránh lỗi 404
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 class ProductData(BaseModel):
     title: str
@@ -33,35 +31,45 @@ class ProductData(BaseModel):
 
 @app.post("/api/analyze")
 async def analyze_product(data: ProductData):
-    # 1. Tính toán TỶ LỆ TRỪ ĐIỂM CHI TIẾT
+    # 1. TÍNH TOÁN TỶ LỆ TRỪ ĐIỂM
     bad_reviews_total = data.star1_count + data.star2_count
     total = max(data.total_reviews_count, 1)
     bad_ratio = bad_reviews_total / total
     
-    # Trừ điểm tuyến tính: Cứ 1% đánh giá xấu trừ 1.5 điểm
     star_score = max(0.0, 100.0 - (bad_ratio * 100 * 1.5))
-    
-    # Tính điểm Media
     media_score = 100.0 if (len(data.images) + data.video_count) >= 5 else (50.0 if (len(data.images) + data.video_count) > 0 else 0.0)
     
-    # 2. ÉP GEMINI AI PHẢI ĐỌC VÀ SUY LUẬN TỪ DATA
-    sampled_reviews = "\n".join(data.reviews[:100]) # Lấy 100 bình luận để AI đọc
+    # 2. ÉP GEMINI AI SUY LUẬN VÀ CHỐT QUYẾT ĐỊNH
+    sampled_reviews = "\n".join(data.reviews[:100]) 
     
     prompt = f"""
-    Đóng vai trò là một trợ lý AI phân tích chất lượng sản phẩm. Hãy đọc các số liệu và bình luận sau:
-    - Sản phẩm: {data.title}
+    Bạn là một chuyên gia mua sắm AI. Người dùng đang cần một LỜI KHUYÊN DỨT KHOÁT để quyết định mua hay không mua sản phẩm này.
+    
+    THÔNG SỐ:
+    - Tên SP: {data.title}
     - Đánh giá xấu (1-2 sao): {bad_reviews_total} trên tổng {data.total_reviews_count}.
-    - Nội dung bình luận trích xuất:
+    - Bình luận thực tế:
     {sampled_reviews}
 
-    YÊU CẦU TRẢ LỜI:
-    1. [SCORE: x.x] (Chấm điểm NLP văn bản từ 0 đến 100, có thể dùng số thập phân, trừ điểm nặng nếu có seeding hoặc chửi bới).
-    2. Viết một đoạn ngắn (3-4 câu) tóm tắt chính xác những gì khách hàng đang khen/chê dựa trên TỪ KHÓA THỰC TẾ trong bình luận. Không dùng văn mẫu.
-    3. Chốt lại bằng: <b>MUA NGAY</b>, <b>CÂN NHẮC</b>, hoặc <b>TRÁNH XA</b>.
+    YÊU CẦU BẮT BUỘC (Trả về HTML):
+    1. [SCORE: x.x] (Bạn hãy tự chấm điểm uy tín NLP từ 0 đến 100).
+    2. Viết 2 câu phân tích thẳng thắn, rạch ròi về chất lượng cốt lõi dựa trên bình luận. 
+    3. CÂU CHỐT HẠ: Phải xuống dòng và in đậm 1 trong 3 câu sau: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
     """
 
     try:
-        response = model.generate_content(prompt)
+        # CƠ CHẾ FALLBACK: Chống lỗi 404 tuyệt đối
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+        except Exception as inner_e:
+            if "404" in str(inner_e) or "not found" in str(inner_e).lower():
+                # Nếu 1.5 lỗi, tự động lùi về gemini-pro bản chuẩn
+                model = genai.GenerativeModel('gemini-pro')
+                response = model.generate_content(prompt)
+            else:
+                raise inner_e
+                
         ai_response_text = response.text
         
         # Bóc tách điểm NLP do AI chấm
@@ -70,16 +78,16 @@ async def analyze_product(data: ProductData):
             try:
                 score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
                 sentiment_score = float(score_str.strip())
-                ai_response_text = ai_response_text.split("]")[1].strip() # Cắt bỏ phần score
+                ai_response_text = ai_response_text.split("]")[1].strip()
             except: pass
             
         verdict_text = ai_response_text
         
     except Exception as e:
         sentiment_score = 50.0
-        verdict_text = f"<b>⚠️ Lỗi kết nối API Gemini.</b> Hệ thống chưa gọi được AI. Lỗi chi tiết: {str(e)[:100]}"
+        verdict_text = f"<b>⚠️ Lỗi hệ thống AI.</b> Lỗi chi tiết: {str(e)[:100]}"
 
-    # Tính điểm tổng (Có số thập phân)
+    # 3. TÍNH ĐIỂM TỔNG HỢP
     trust_score = round((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4), 1)
     trust_score = max(0.0, min(100.0, trust_score))
 
