@@ -67,7 +67,7 @@ async def analyze_product(data: ProductData):
     seeding_count = sum(1 for rev in data.reviews if any(word in rev.lower() for word in seeding_keywords))
     
     seeding_ratio = seeding_count / max(len(data.reviews), 1)
-    if seeding_ratio > 0.3: # Hơn 30% là review rác
+    if seeding_ratio > 0.3:
         authenticity_score = 30
     elif seeding_ratio > 0.1:
         authenticity_score = 70
@@ -76,20 +76,20 @@ async def analyze_product(data: ProductData):
     trust_score = int((star_score * 0.3) + (media_score * 0.2) + (sentiment_score * 0.3) + (authenticity_score * 0.2))
     trust_score = max(0, min(100, trust_score))
     
-    # KẾT LUẬN & ĐIỀU HƯỚNG QUYẾT ĐỊNH MUA
+    # KẾT LUẬN & ĐIỀU HƯỚNG QUYẾT ĐỊNH MUA (Chuẩn Pháp Lý theo Đề cương)
     verdict_text = ""
     if trust_score >= 80:
-        label = "Nên Mua (Độ uy tín cao)"
+        label = "Đáng tin cậy (Có thể yên tâm)"
         color_code = "#059669" 
-        verdict_text = "Sản phẩm an toàn, chất lượng đúng mô tả, ít dấu hiệu seeding. Bạn có thể tự tin chốt đơn!"
+        verdict_text = "Sản phẩm có độ uy tín cao, dữ liệu nhất quán và ít dấu hiệu đánh giá bất thường. Bạn có thể an tâm tham khảo."
     elif trust_score >= 60:
-        label = "Cân nhắc kỹ (Có rủi ro nhỏ)"
+        label = "Cần thận trọng (Có dấu hiệu rủi ro)"
         color_code = "#D97706" 
-        verdict_text = "Có một số rủi ro về review cày xu hoặc chất lượng. Cần đọc kỹ bình luận trước khi mua."
+        verdict_text = "Phát hiện một số dấu hiệu bất thường về đánh giá hoặc chất lượng. Cần đọc kỹ phần bình luận trước khi quyết định."
     else:
-        label = "Rủi ro cao (Không nên mua)"
+        label = "Rủi ro cao (Khuyến nghị cân nhắc lại)"
         color_code = "#DC2626" 
-        verdict_text = "Cảnh báo rủi ro cao! Lịch sử đánh giá có nhiều bất thường hoặc phàn nàn nghiêm trọng."
+        verdict_text = "Cảnh báo: Tỉ lệ đánh giá tiêu cực hoặc bất thường rất cao. Khuyến nghị tham khảo thêm các gian hàng khác."
         
     warning_text = " | ".join(warnings) if warnings else ""
     
