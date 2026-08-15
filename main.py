@@ -14,10 +14,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# THIẾT LẬP GEMINI AI 
+# THIẾT LẬP GEMINI AI (Bảo mật qua Biến môi trường)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Đã nâng cấp lên model mới nhất để tránh lỗi 404
+model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 class ProductData(BaseModel):
     title: str
@@ -32,7 +33,7 @@ class ProductData(BaseModel):
 
 @app.post("/api/analyze")
 async def analyze_product(data: ProductData):
-    # 1. Tính toán TỶ LỆ TRỪ ĐIỂM CHI TIẾT (Cho ra số thập phân)
+    # 1. Tính toán TỶ LỆ TRỪ ĐIỂM CHI TIẾT
     bad_reviews_total = data.star1_count + data.star2_count
     total = max(data.total_reviews_count, 1)
     bad_ratio = bad_reviews_total / total
@@ -69,14 +70,14 @@ async def analyze_product(data: ProductData):
             try:
                 score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
                 sentiment_score = float(score_str.strip())
-                ai_response_text = ai_response_text.split("]")[1].strip() # Cắt bỏ phần score trong text
+                ai_response_text = ai_response_text.split("]")[1].strip() # Cắt bỏ phần score
             except: pass
             
         verdict_text = ai_response_text
         
     except Exception as e:
         sentiment_score = 50.0
-        verdict_text = f"<b>⚠️ Lỗi kết nối API Gemini.</b> Hệ thống Render của bạn chưa gọi được AI. Lỗi chi tiết: {str(e)[:50]}"
+        verdict_text = f"<b>⚠️ Lỗi kết nối API Gemini.</b> Hệ thống chưa gọi được AI. Lỗi chi tiết: {str(e)[:100]}"
 
     # Tính điểm tổng (Có số thập phân)
     trust_score = round((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4), 1)
@@ -104,7 +105,7 @@ async def analyze_product(data: ProductData):
             "star_score": round(star_score, 1),
             "media_score": round(media_score, 1),
             "sentiment_score": round(sentiment_score, 1),
-            "authenticity_score": round(sentiment_score, 1), # Gộp chung vào NLP do AI tự phân tích
+            "authenticity_score": round(sentiment_score, 1), 
             "crawled_stars": data.average_star,
             "crawled_reviews": len(data.reviews),
             "crawled_images": len(data.images),
