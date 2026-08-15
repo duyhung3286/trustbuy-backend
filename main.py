@@ -16,10 +16,8 @@ app.add_middleware(
 
 # THIẾT LẬP GEMINI AI (Lấy key từ Biến môi trường)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Chỉ sử dụng 1 mô hình chuẩn và nhanh nhất hiện tại
-model = genai.GenerativeModel('gemini-1.5-flash')
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 class ProductData(BaseModel):
     title: str
@@ -43,6 +41,7 @@ async def analyze_product(data: ProductData):
     media_score = 100.0 if (len(data.images) + data.video_count) >= 5 else (50.0 if (len(data.images) + data.video_count) > 0 else 0.0)
     
     # 2. ÉP GEMINI AI SUY LUẬN VÀ CHỐT QUYẾT ĐỊNH
+    # Chỉ lấy 100 bình luận để tránh làm quá tải bộ nhớ AI
     sampled_reviews = "\n".join(data.reviews[:100]) 
     
     prompt = f"""
@@ -60,24 +59,43 @@ async def analyze_product(data: ProductData):
     3. CÂU CHỐT HẠ: Phải xuống dòng và in đậm 1 trong 3 câu sau: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
     """
 
-    try:
-        response = model.generate_content(prompt)
-        ai_response_text = response.text
-        
-        # Bóc tách điểm
-        sentiment_score = 70.0
-        if "[SCORE:" in ai_response_text:
-            try:
-                score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
-                sentiment_score = float(score_str.strip())
-                ai_response_text = ai_response_text.split("]")[1].strip()
-            except: pass
+    ai_response_text = ""
+    sentiment_score = 50.0
+    
+    # KIỂM TRA XEM CÓ API KEY CHƯA
+    if not GEMINI_API_KEY:
+        verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa nhập GEMINI_API_KEY vào biến môi trường của Render."
+    else:
+        try:
+            # VÒNG LẶP DÒ TÌM MÔ HÌNH CHỐNG 404
+            models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-pro']
             
-        verdict_text = ai_response_text
-        
-    except Exception as e:
-        sentiment_score = 50.0
-        verdict_text = f"<b>⚠️ Lỗi hệ thống AI.</b> Lỗi chi tiết: {str(e)[:150]}"
+            for model_name in models_to_try:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content(prompt)
+                    if response.text:
+                        ai_response_text = response.text
+                        break # Nếu thành công, thoát vòng lặp ngay
+                except Exception as inner_e:
+                    continue # Bị lỗi thì thử mô hình tiếp theo
+                    
+            if not ai_response_text:
+                raise Exception("Tất cả các phiên bản AI đều bị Google từ chối đối với API Key này.")
+            
+            # Bóc tách điểm NLP do AI chấm
+            if "[SCORE:" in ai_response_text:
+                try:
+                    score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
+                    sentiment_score = float(score_str.strip())
+                    ai_response_text = ai_response_text.split("]")[1].strip()
+                except: pass
+                
+            verdict_text = ai_response_text
+            
+        except Exception as e:
+            sentiment_score = 50.0
+            verdict_text = f"<b>⚠️ Lỗi hệ thống AI.</b> Chi tiết: {str(e)[:150]}"
 
     # 3. TÍNH ĐIỂM TỔNG HỢP
     trust_score = round((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4), 1)
