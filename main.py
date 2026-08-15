@@ -14,7 +14,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# THIẾT LẬP GEMINI AI (Lấy key an toàn từ môi trường)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -32,7 +31,6 @@ class ProductData(BaseModel):
 
 @app.post("/api/analyze")
 async def analyze_product(data: ProductData):
-    # 1. TÍNH TOÁN TỶ LỆ TRỪ ĐIỂM KHOA HỌC
     bad_reviews_total = data.star1_count + data.star2_count
     total = max(data.total_reviews_count, 1)
     bad_ratio = bad_reviews_total / total
@@ -40,33 +38,33 @@ async def analyze_product(data: ProductData):
     star_score = max(0.0, 100.0 - (bad_ratio * 100 * 1.5))
     media_score = 100.0 if (len(data.images) + data.video_count) >= 5 else (50.0 if (len(data.images) + data.video_count) > 0 else 0.0)
     
-    # 2. PROMPT CHỐT SALE DÀNH CHO AI
-    # Lấy tối đa 100 bình luận để hệ thống chạy tốc độ cao
-    sampled_reviews = "\n".join(data.reviews[:100]) 
-    
-    prompt = f"""
-    Bạn là một chuyên gia mua sắm AI. Người dùng đang cần một LỜI KHUYÊN DỨT KHOÁT để quyết định mua hay không mua sản phẩm này.
-    
-    THÔNG SỐ:
-    - Tên SP: {data.title}
-    - Đánh giá xấu (1-2 sao): {bad_reviews_total} trên tổng {data.total_reviews_count}.
-    - Bình luận thực tế:
-    {sampled_reviews}
-
-    YÊU CẦU BẮT BUỘC (Trả về HTML):
-    1. [SCORE: x.x] (Bạn hãy tự chấm điểm uy tín NLP từ 0 đến 100).
-    2. Viết 2 câu phân tích thẳng thắn, rạch ròi về chất lượng cốt lõi dựa trên bình luận. 
-    3. CÂU CHỐT HẠ: Phải xuống dòng và in đậm 1 trong 3 câu sau: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
-    """
-
     ai_response_text = ""
     sentiment_score = 50.0
+    last_error = ""
     
-    if not GEMINI_API_KEY:
-        verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa thiết lập biến môi trường GEMINI_API_KEY."
+    # 🛡️ LỚP PHÒNG THỦ: Tránh AI bị sập khi không quét được đánh giá
+    if len(data.reviews) == 0:
+        verdict_text = "<b>⚠️ Không thu thập được bình luận.</b> Hãy kéo cuộn chuột xuống dưới cùng để Shopee hiển thị bình luận, sau đó ấn F5 và quét lại!"
+    elif not GEMINI_API_KEY:
+        verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa thiết lập biến môi trường GEMINI_API_KEY trên Render."
     else:
         try:
-            # VÒNG LẶP DÒ TÌM MÔ HÌNH CHỐNG 404 TUYỆT ĐỐI
+            # Lấy mẫu tối đa 100 bình luận để chạy tốc độ cao
+            sampled_reviews = "\n".join(data.reviews[:100]) 
+            prompt = f"""
+            Bạn là một chuyên gia mua sắm AI. Đưa ra LỜI KHUYÊN DỨT KHOÁT để quyết định mua hay không.
+            - Tên SP: {data.title}
+            - Đánh giá xấu (1-2 sao): {bad_reviews_total}/{data.total_reviews_count}.
+            - Bình luận thực tế:
+            {sampled_reviews}
+
+            YÊU CẦU:
+            1. [SCORE: x.x] (Chấm điểm uy tín NLP từ 0-100).
+            2. Phân tích 2 câu ngắn gọn, rạch ròi.
+            3. Chốt lại bằng 1 trong 3 câu in đậm: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
+            """
+
+            # THUẬT TOÁN BẤT TỬ: Thử 4 model liên tiếp chống 404
             models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-pro']
             
             for model_name in models_to_try:
@@ -75,14 +73,15 @@ async def analyze_product(data: ProductData):
                     response = model.generate_content(prompt)
                     if response.text:
                         ai_response_text = response.text
-                        break # AI trả lời thành công -> Thoát vòng lặp
-                except Exception:
-                    continue # Nếu model này bị lỗi 404, thử model tiếp theo
+                        break 
+                except Exception as inner_e:
+                    last_error = str(inner_e)
+                    continue 
                     
             if not ai_response_text:
-                raise Exception("Tất cả các phiên bản AI đều đang bảo trì.")
+                raise Exception(f"Google từ chối gọi API. Lỗi gốc: {last_error}")
             
-            # Bóc tách điểm NLP
+            # Bóc tách điểm NLP AI chấm
             if "[SCORE:" in ai_response_text:
                 try:
                     score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
@@ -94,9 +93,8 @@ async def analyze_product(data: ProductData):
             
         except Exception as e:
             sentiment_score = 50.0
-            verdict_text = f"<b>⚠️ Lỗi hệ thống AI.</b> Chi tiết: {str(e)[:150]}"
+            verdict_text = f"<b>⚠️ Lỗi kết nối AI:</b> {str(e)[:200]}"
 
-    # 3. TÍNH ĐIỂM TỔNG HỢP & GÁN MÀU SẮC
     trust_score = round((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4), 1)
     trust_score = max(0.0, min(100.0, trust_score))
 
@@ -118,7 +116,7 @@ async def analyze_product(data: ProductData):
         "warning": "",
         "verdict": verdict_text,
         "details": {
-            "tier": "TrustBuy AI-Powered",
+            "tier": "TrustBuy AI",
             "star_score": round(star_score, 1),
             "media_score": round(media_score, 1),
             "sentiment_score": round(sentiment_score, 1),
