@@ -14,9 +14,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# THIẾT LẬP GEMINI AI
+# THIẾT LẬP GEMINI AI (Lấy key từ Biến môi trường)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 genai.configure(api_key=GEMINI_API_KEY)
+
+# Chỉ sử dụng 1 mô hình chuẩn và nhanh nhất hiện tại
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 class ProductData(BaseModel):
     title: str
@@ -58,21 +61,10 @@ async def analyze_product(data: ProductData):
     """
 
     try:
-        # CƠ CHẾ FALLBACK: Chống lỗi 404 tuyệt đối
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
-        except Exception as inner_e:
-            if "404" in str(inner_e) or "not found" in str(inner_e).lower():
-                # Nếu 1.5 lỗi, tự động lùi về gemini-pro bản chuẩn
-                model = genai.GenerativeModel('gemini-pro')
-                response = model.generate_content(prompt)
-            else:
-                raise inner_e
-                
+        response = model.generate_content(prompt)
         ai_response_text = response.text
         
-        # Bóc tách điểm NLP do AI chấm
+        # Bóc tách điểm
         sentiment_score = 70.0
         if "[SCORE:" in ai_response_text:
             try:
@@ -85,7 +77,7 @@ async def analyze_product(data: ProductData):
         
     except Exception as e:
         sentiment_score = 50.0
-        verdict_text = f"<b>⚠️ Lỗi hệ thống AI.</b> Lỗi chi tiết: {str(e)[:100]}"
+        verdict_text = f"<b>⚠️ Lỗi hệ thống AI.</b> Lỗi chi tiết: {str(e)[:150]}"
 
     # 3. TÍNH ĐIỂM TỔNG HỢP
     trust_score = round((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4), 1)
