@@ -14,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# THIẾT LẬP GEMINI AI (Lấy key từ Biến môi trường)
+# THIẾT LẬP GEMINI AI (Lấy key an toàn từ môi trường)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -32,7 +32,7 @@ class ProductData(BaseModel):
 
 @app.post("/api/analyze")
 async def analyze_product(data: ProductData):
-    # 1. TÍNH TOÁN TỶ LỆ TRỪ ĐIỂM
+    # 1. TÍNH TOÁN TỶ LỆ TRỪ ĐIỂM KHOA HỌC
     bad_reviews_total = data.star1_count + data.star2_count
     total = max(data.total_reviews_count, 1)
     bad_ratio = bad_reviews_total / total
@@ -40,8 +40,8 @@ async def analyze_product(data: ProductData):
     star_score = max(0.0, 100.0 - (bad_ratio * 100 * 1.5))
     media_score = 100.0 if (len(data.images) + data.video_count) >= 5 else (50.0 if (len(data.images) + data.video_count) > 0 else 0.0)
     
-    # 2. ÉP GEMINI AI SUY LUẬN VÀ CHỐT QUYẾT ĐỊNH
-    # Chỉ lấy 100 bình luận để tránh làm quá tải bộ nhớ AI
+    # 2. PROMPT CHỐT SALE DÀNH CHO AI
+    # Lấy tối đa 100 bình luận để hệ thống chạy tốc độ cao
     sampled_reviews = "\n".join(data.reviews[:100]) 
     
     prompt = f"""
@@ -62,12 +62,11 @@ async def analyze_product(data: ProductData):
     ai_response_text = ""
     sentiment_score = 50.0
     
-    # KIỂM TRA XEM CÓ API KEY CHƯA
     if not GEMINI_API_KEY:
-        verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa nhập GEMINI_API_KEY vào biến môi trường của Render."
+        verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa thiết lập biến môi trường GEMINI_API_KEY."
     else:
         try:
-            # VÒNG LẶP DÒ TÌM MÔ HÌNH CHỐNG 404
+            # VÒNG LẶP DÒ TÌM MÔ HÌNH CHỐNG 404 TUYỆT ĐỐI
             models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-pro']
             
             for model_name in models_to_try:
@@ -76,14 +75,14 @@ async def analyze_product(data: ProductData):
                     response = model.generate_content(prompt)
                     if response.text:
                         ai_response_text = response.text
-                        break # Nếu thành công, thoát vòng lặp ngay
-                except Exception as inner_e:
-                    continue # Bị lỗi thì thử mô hình tiếp theo
+                        break # AI trả lời thành công -> Thoát vòng lặp
+                except Exception:
+                    continue # Nếu model này bị lỗi 404, thử model tiếp theo
                     
             if not ai_response_text:
-                raise Exception("Tất cả các phiên bản AI đều bị Google từ chối đối với API Key này.")
+                raise Exception("Tất cả các phiên bản AI đều đang bảo trì.")
             
-            # Bóc tách điểm NLP do AI chấm
+            # Bóc tách điểm NLP
             if "[SCORE:" in ai_response_text:
                 try:
                     score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
@@ -97,7 +96,7 @@ async def analyze_product(data: ProductData):
             sentiment_score = 50.0
             verdict_text = f"<b>⚠️ Lỗi hệ thống AI.</b> Chi tiết: {str(e)[:150]}"
 
-    # 3. TÍNH ĐIỂM TỔNG HỢP
+    # 3. TÍNH ĐIỂM TỔNG HỢP & GÁN MÀU SẮC
     trust_score = round((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4), 1)
     trust_score = max(0.0, min(100.0, trust_score))
 
