@@ -15,7 +15,7 @@ app.add_middleware(
 )
 
 # THIẾT LẬP GEMINI AI 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_API_KEY") # NHỚ DÁN KEY CỦA BẠN VÀO ĐÂY
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
