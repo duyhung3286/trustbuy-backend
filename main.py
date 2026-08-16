@@ -42,15 +42,14 @@ async def analyze_product(data: ProductData):
     sentiment_score = 50.0
     last_error = ""
     
-    # 🛡️ LỚP PHÒNG THỦ: Tránh AI bị sập khi không quét được đánh giá
     if len(data.reviews) == 0:
         verdict_text = "<b>⚠️ Không thu thập được bình luận.</b> Hãy kéo cuộn chuột xuống dưới cùng để Shopee hiển thị bình luận, sau đó ấn F5 và quét lại!"
     elif not GEMINI_API_KEY:
         verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa thiết lập biến môi trường GEMINI_API_KEY trên Render."
     else:
         try:
-            # Lấy mẫu tối đa 100 bình luận để chạy tốc độ cao
-            sampled_reviews = "\n".join(data.reviews[:100]) 
+            # Tối ưu hóa: Chỉ lấy 60 bình luận để AI chạy siêu tốc và không bị Google từ chối do quá tải
+            sampled_reviews = "\n".join(data.reviews[:60]) 
             prompt = f"""
             Bạn là một chuyên gia mua sắm AI. Đưa ra LỜI KHUYÊN DỨT KHOÁT để quyết định mua hay không.
             - Tên SP: {data.title}
@@ -64,8 +63,8 @@ async def analyze_product(data: ProductData):
             3. Chốt lại bằng 1 trong 3 câu in đậm: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
             """
 
-            # THUẬT TOÁN BẤT TỬ: Thử 4 model liên tiếp chống 404
-            models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-pro']
+            # CHỈ SỬ DỤNG THẾ HỆ AI 1.5 MỚI NHẤT (Loại bỏ các bản cũ đã bị Google khai tử)
+            models_to_try = ['gemini-1.5-flash', 'gemini-1.5-flash-latest']
             
             for model_name in models_to_try:
                 try:
@@ -79,9 +78,8 @@ async def analyze_product(data: ProductData):
                     continue 
                     
             if not ai_response_text:
-                raise Exception(f"Google từ chối gọi API. Lỗi gốc: {last_error}")
+                raise Exception(f"{last_error}")
             
-            # Bóc tách điểm NLP AI chấm
             if "[SCORE:" in ai_response_text:
                 try:
                     score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
@@ -93,7 +91,7 @@ async def analyze_product(data: ProductData):
             
         except Exception as e:
             sentiment_score = 50.0
-            verdict_text = f"<b>⚠️ Lỗi kết nối AI:</b> {str(e)[:200]}"
+            verdict_text = f"<b>⚠️ Lỗi API Gemini:</b> {str(e)[:250]}"
 
     trust_score = round((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4), 1)
     trust_score = max(0.0, min(100.0, trust_score))
