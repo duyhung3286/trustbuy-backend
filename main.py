@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-import google.generativeai as genai
+from google import genai  # SDK MỚI - thay cho "import google.generativeai as genai"
 import os
 
 app = FastAPI()
@@ -14,11 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# THIẾT LẬP GEMINI AI (Nhớ dán cái key sạch AQ.Ab8RN... vào biến môi trường trên Render)
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
-if GEMINI_API_KEY:
-    # Lau sạch key để chống lỗi 503 Illegal metadata
-    genai.configure(api_key=GEMINI_API_KEY.strip())
+# THIẾT LẬP GEMINI AI (dán key AQ.xxxx... vào biến môi trường GEMINI_API_KEY trên Render)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY.strip()) if GEMINI_API_KEY else None
 
 class ProductData(BaseModel):
     title: str
@@ -36,21 +34,21 @@ async def analyze_product(data: ProductData):
     bad_reviews_total = data.star1_count + data.star2_count
     total = max(data.total_reviews_count, 1)
     bad_ratio = bad_reviews_total / total
-    
+
     star_score = max(0.0, 100.0 - (bad_ratio * 100 * 1.5))
     media_score = 100.0 if (len(data.images) + data.video_count) >= 5 else (50.0 if (len(data.images) + data.video_count) > 0 else 0.0)
-    
+
     ai_response_text = ""
     sentiment_score = 50.0
     last_error = ""
-    
+
     if len(data.reviews) == 0:
         verdict_text = "<b>⚠️ Không thu thập được bình luận.</b> Hãy kéo cuộn chuột xuống dưới cùng để Shopee hiển thị bình luận, sau đó ấn F5 và quét lại!"
-    elif not GEMINI_API_KEY:
+    elif not client:
         verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa thiết lập biến môi trường GEMINI_API_KEY trên Render."
     else:
         try:
-            sampled_reviews = "\n".join(data.reviews[:60]) 
+            sampled_reviews = "\n".join(data.reviews[:60])
             prompt = f"""
             Bạn là một chuyên gia mua sắm AI. Đưa ra LỜI KHUYÊN DỨT KHOÁT để quyết định mua hay không.
             - Tên SP: {data.title}
@@ -64,32 +62,35 @@ async def analyze_product(data: ProductData):
             3. Chốt lại bằng 1 trong 3 câu in đậm: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
             """
 
-            # ĐÃ CẬP NHẬT DANH SÁCH AI SIÊU VIỆT MỚI NHẤT CỦA BẠN
+            # Danh sách model thử lần lượt
             models_to_try = ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-2.5-flash']
-            
+
             for model_name in models_to_try:
                 try:
-                    model = genai.GenerativeModel(model_name)
-                    response = model.generate_content(prompt)
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                    )
                     if response.text:
                         ai_response_text = response.text
-                        break 
+                        break
                 except Exception as inner_e:
                     last_error = str(inner_e)
-                    continue 
-                    
+                    continue
+
             if not ai_response_text:
                 raise Exception(f"{last_error}")
-            
+
             if "[SCORE:" in ai_response_text:
                 try:
                     score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
                     sentiment_score = float(score_str.strip())
                     ai_response_text = ai_response_text.split("]")[1].strip()
-                except: pass
-                
+                except:
+                    pass
+
             verdict_text = ai_response_text
-            
+
         except Exception as e:
             sentiment_score = 50.0
             verdict_text = f"<b>⚠️ Lỗi API Gemini:</b> {str(e)[:250]}"
@@ -119,7 +120,7 @@ async def analyze_product(data: ProductData):
             "star_score": round(star_score, 1),
             "media_score": round(media_score, 1),
             "sentiment_score": round(sentiment_score, 1),
-            "authenticity_score": round(sentiment_score, 1), 
+            "authenticity_score": round(sentiment_score, 1),
             "crawled_stars": data.average_star,
             "crawled_reviews": len(data.reviews),
             "crawled_images": len(data.images),
