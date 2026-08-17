@@ -14,9 +14,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# THIẾT LẬP GEMINI AI (Nhớ dán cái key sạch AQ.Ab8RN... vào biến môi trường trên Render)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    # Lau sạch key để chống lỗi 503 Illegal metadata
+    genai.configure(api_key=GEMINI_API_KEY.strip())
 
 class ProductData(BaseModel):
     title: str
@@ -48,7 +50,6 @@ async def analyze_product(data: ProductData):
         verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa thiết lập biến môi trường GEMINI_API_KEY trên Render."
     else:
         try:
-            # Tối ưu hóa: Chỉ lấy 60 bình luận để AI chạy siêu tốc và không bị Google từ chối do quá tải
             sampled_reviews = "\n".join(data.reviews[:60]) 
             prompt = f"""
             Bạn là một chuyên gia mua sắm AI. Đưa ra LỜI KHUYÊN DỨT KHOÁT để quyết định mua hay không.
@@ -63,8 +64,8 @@ async def analyze_product(data: ProductData):
             3. Chốt lại bằng 1 trong 3 câu in đậm: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
             """
 
-            # CHỈ SỬ DỤNG THẾ HỆ AI 1.5 MỚI NHẤT (Loại bỏ các bản cũ đã bị Google khai tử)
-            models_to_try = ['gemini-1.5-flash', 'gemini-1.5-flash-latest']
+            # ĐÃ CẬP NHẬT DANH SÁCH AI SIÊU VIỆT MỚI NHẤT CỦA BẠN
+            models_to_try = ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-2.5-flash']
             
             for model_name in models_to_try:
                 try:
