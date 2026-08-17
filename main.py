@@ -14,11 +14,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Lấy API Key và thiết lập Client theo chuẩn mới
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
+# THIẾT LẬP CLIENT BẢO MẬT (Hỗ trợ định dạng khóa AQ...)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 client = None
 if GEMINI_API_KEY:
-    client = genai.Client(api_key=GEMINI_API_KEY.strip())
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
 class ProductData(BaseModel):
     title: str
@@ -64,16 +64,18 @@ async def analyze_product(data: ProductData):
             3. Chốt lại bằng 1 trong 3 câu in đậm: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
             """
 
-            models_to_try = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-flash-latest']
+            # SỬ DỤNG CÁC ĐỜI AI MỚI NHẤT TRONG TÀI LIỆU
+            models_to_try = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']
             
             for model_name in models_to_try:
                 try:
-                    response = client.models.generate_content(
+                    # GỌI API THEO ĐÚNG HƯỚNG DẪN MỚI TỪ GOOGLE
+                    interaction = client.interactions.create(
                         model=model_name,
-                        contents=prompt,
+                        input=prompt
                     )
-                    if response.text:
-                        ai_response_text = response.text
+                    if interaction.output_text:
+                        ai_response_text = interaction.output_text
                         break 
                 except Exception as inner_e:
                     last_error = str(inner_e)
@@ -82,6 +84,7 @@ async def analyze_product(data: ProductData):
             if not ai_response_text:
                 raise Exception(f"{last_error}")
             
+            # Xử lý cắt chuỗi lấy điểm số
             if "[SCORE:" in ai_response_text:
                 try:
                     score_str = ai_response_text.split("[SCORE:")[1].split("]")[0]
@@ -95,9 +98,11 @@ async def analyze_product(data: ProductData):
             sentiment_score = 50.0
             verdict_text = f"<b>⚠️ Lỗi API Gemini:</b> {str(e)[:250]}"
 
+    # Tính toán điểm tổng Trust Score
     trust_score = round((star_score * 0.4) + (media_score * 0.2) + (sentiment_score * 0.4), 1)
     trust_score = max(0.0, min(100.0, trust_score))
 
+    # Gắn nhãn màu sắc
     if trust_score >= 80:
         label = "MUA NGAY (Rất an toàn)"
         color_code = "#059669"
