@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-# IMPORT THƯ VIỆN CHUẨN MỚI CỦA GOOGLE
 from google import genai
 import os
 
@@ -15,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# THIẾT LẬP CLIENT THEO CHUẨN MỚI (Hỗ trợ Key AQ...)
+# Lấy API Key và thiết lập Client theo chuẩn mới
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 client = None
 if GEMINI_API_KEY:
@@ -65,12 +64,10 @@ async def analyze_product(data: ProductData):
             3. Chốt lại bằng 1 trong 3 câu in đậm: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
             """
 
-            # DÙNG DANH SÁCH AI MỚI NHẤT
             models_to_try = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-flash-latest']
             
             for model_name in models_to_try:
                 try:
-                    # GỌI MODEL THEO CÚ PHÁP MỚI CỦA THƯ VIỆN google-genai
                     response = client.models.generate_content(
                         model=model_name,
                         contents=prompt,
