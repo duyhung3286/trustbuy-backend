@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-from google import genai  # SDK MỚI - thay cho "import google.generativeai as genai"
 import os
+import httpx  # Gọi trực tiếp REST API, tránh phụ thuộc lỗi tương thích của SDK
 
 app = FastAPI()
 
@@ -16,7 +16,30 @@ app.add_middleware(
 
 # THIẾT LẬP GEMINI AI (dán key AQ.xxxx... vào biến môi trường GEMINI_API_KEY trên Render)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY.strip()) if GEMINI_API_KEY else None
+GEMINI_API_KEY = GEMINI_API_KEY.strip() if GEMINI_API_KEY else None
+
+INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+
+def call_gemini_interactions(model_name: str, prompt: str) -> str:
+    """Gọi thẳng REST endpoint Interactions API (giống hệt curl đã test thành công)."""
+    resp = httpx.post(
+        INTERACTIONS_URL,
+        headers={
+            "x-goog-api-key": GEMINI_API_KEY,
+            "Content-Type": "application/json",
+            "Api-Revision": "2026-05-20",
+        },
+        json={"model": model_name, "input": prompt},
+        timeout=60.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    for step in data.get("steps", []):
+        if step.get("type") == "model_output":
+            for block in step.get("content", []):
+                if block.get("type") == "text":
+                    return block.get("text", "")
+    return ""
 
 class ProductData(BaseModel):
     title: str
@@ -44,7 +67,7 @@ async def analyze_product(data: ProductData):
 
     if len(data.reviews) == 0:
         verdict_text = "<b>⚠️ Không thu thập được bình luận.</b> Hãy kéo cuộn chuột xuống dưới cùng để Shopee hiển thị bình luận, sau đó ấn F5 và quét lại!"
-    elif not client:
+    elif not GEMINI_API_KEY:
         verdict_text = "<b>⚠️ Thiếu API Key.</b> Bạn chưa thiết lập biến môi trường GEMINI_API_KEY trên Render."
     else:
         try:
@@ -62,17 +85,14 @@ async def analyze_product(data: ProductData):
             3. Chốt lại bằng 1 trong 3 câu in đậm: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
             """
 
-            # Danh sách model thử lần lượt (dùng Interactions API mới)
+            # Danh sách model thử lần lượt (gọi thẳng REST Interactions API)
             models_to_try = ['gemini-3.5-flash', 'gemini-3.7-flash', 'gemini-flash-latest']
 
             for model_name in models_to_try:
                 try:
-                    interaction = client.interactions.create(
-                        model=model_name,
-                        input=prompt,
-                    )
-                    if interaction.output_text:
-                        ai_response_text = interaction.output_text
+                    text = call_gemini_interactions(model_name, prompt)
+                    if text:
+                        ai_response_text = text
                         break
                 except Exception as inner_e:
                     last_error = str(inner_e)
