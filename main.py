@@ -14,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# THIẾT LẬP CLIENT BẢO MẬT (Hỗ trợ định dạng khóa AQ...)
+# THIẾT LẬP CLIENT BẢO MẬT (Chuẩn Interactions API cho khóa AQ...)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 client = None
 if GEMINI_API_KEY:
@@ -64,12 +64,12 @@ async def analyze_product(data: ProductData):
             3. Chốt lại bằng 1 trong 3 câu in đậm: <b>MUA NGAY KHÔNG DO DỰ!</b> hoặc <b>CẦN CÂN NHẮC KỸ!</b> hoặc <b>TRÁNH XA KẺO MẤT TIỀN!</b>
             """
 
-            # SỬ DỤNG CÁC ĐỜI AI MỚI NHẤT TRONG TÀI LIỆU
-            models_to_try = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']
+            # Sử dụng các mô hình tiêu chuẩn ghi trong tài liệu Google 2026
+            models_to_try = ['gemini-3.6-flash', 'gemini-3.1-flash', 'gemini-2.5-flash']
             
             for model_name in models_to_try:
                 try:
-                    # GỌI API THEO ĐÚNG HƯỚNG DẪN MỚI TỪ GOOGLE
+                    # GỌI API BẰNG INTERACTIONS API (Chuẩn mới nhất)
                     interaction = client.interactions.create(
                         model=model_name,
                         input=prompt
